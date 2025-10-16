@@ -371,6 +371,100 @@ static void GetModelInfo(DataChunk &args, ExpressionState &state, Vector &result
 }
 
 /**
+ * @brief Implements the `infera_load_text_model(name, path, tokenizer_path, max_length)` SQL function.
+ *
+ * Loads an ONNX model configured for text processing with a tokenizer.
+ *
+ * @param args The input arguments from DuckDB.
+ * @param state The expression state.
+ * @param result The result vector to populate.
+ */
+static void LoadTextModel(DataChunk &args, ExpressionState &state, Vector &result) {
+  if (args.ColumnCount() != 4) {
+    throw InvalidInputException("infera_load_text_model(model_name, path, tokenizer_path, max_length) expects exactly 4 arguments");
+  }
+  if (args.size() == 0) { return; }
+  auto model_name = args.data[0].GetValue(0);
+  auto path = args.data[1].GetValue(0);
+  auto tokenizer_path = args.data[2].GetValue(0);
+  auto max_length = args.data[3].GetValue(0);
+  
+  if (model_name.IsNull() || path.IsNull() || tokenizer_path.IsNull() || max_length.IsNull()) {
+    throw InvalidInputException("Model name, path, tokenizer path, and max_length cannot be NULL");
+  }
+  
+  std::string model_name_str = model_name.ToString();
+  std::string path_str = path.ToString();
+  std::string tokenizer_path_str = tokenizer_path.ToString();
+  size_t max_length_val = max_length.GetValue<int64_t>();
+  
+  if (model_name_str.empty()) {
+    throw InvalidInputException("Model name cannot be empty");
+  }
+  
+  int rc = infera::infera_load_text_model(model_name_str.c_str(), path_str.c_str(), 
+                                          tokenizer_path_str.c_str(), max_length_val);
+  bool success = rc == 0;
+  if (!success) {
+    throw InvalidInputException("Failed to load text model '" + model_name_str + "': " + GetInferaError());
+  }
+  result.SetVectorType(VectorType::CONSTANT_VECTOR);
+  ConstantVector::GetData<bool>(result)[0] = success;
+  ConstantVector::SetNull(result, false);
+}
+
+/**
+ * @brief Implements the `infera_predict_text(name, text)` SQL function.
+ *
+ * Takes a model name and text input, processes the text through tokenization,
+ * and runs inference to generate embeddings or other outputs.
+ *
+ * @param args The input arguments from DuckDB.
+ * @param state The expression state.
+ * @param result The result vector to populate.
+ */
+static void PredictText(DataChunk &args, ExpressionState &state, Vector &result) {
+  if (args.ColumnCount() != 2) {
+    throw InvalidInputException("infera_predict_text(model_name, text) requires 2 arguments");
+  }
+  if (args.size() == 0) { return; }
+  
+  result.SetVectorType(VectorType::FLAT_VECTOR);
+  for (idx_t i = 0; i < args.size(); i++) {
+    auto model_name_val = args.data[0].GetValue(i);
+    auto text_val = args.data[1].GetValue(i);
+    
+    if (model_name_val.IsNull() || text_val.IsNull()) {
+      result.SetValue(i, Value());
+      continue;
+    }
+    
+    std::string model_name_str = model_name_val.ToString();
+    std::string text_str = text_val.ToString();
+    
+    infera::InferaInferenceResult res = infera::infera_predict_text(
+        model_name_str.c_str(), 
+        text_str.c_str()
+    );
+    
+    if (res.status != 0) {
+      infera::infera_free_result(res);
+      throw InvalidInputException("Text inference failed for model '" + model_name_str + "': " + GetInferaError());
+    }
+    
+    // Convert result to list of floats (embedding vector)
+    std::vector<Value> embeddings;
+    embeddings.reserve(res.len);
+    for (size_t j = 0; j < res.len; ++j) {
+      embeddings.emplace_back(Value::FLOAT(res.data[j]));
+    }
+    result.SetValue(i, Value::LIST(std::move(embeddings)));
+    infera::infera_free_result(res);
+  }
+  result.Verify(args.size());
+}
+
+/**
  * @brief Registers all the Infera functions with DuckDB.
  *
  * This internal helper function is called by the extension loading mechanism to
@@ -380,6 +474,7 @@ static void GetModelInfo(DataChunk &args, ExpressionState &state, Vector &result
  */
 static void LoadInternal(ExtensionLoader &loader) {
   loader.RegisterFunction(ScalarFunction("infera_load_model", {LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::BOOLEAN, LoadModel));
+  loader.RegisterFunction(ScalarFunction("infera_load_text_model", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT}, LogicalType::BOOLEAN, LoadTextModel));
   loader.RegisterFunction(ScalarFunction("infera_unload_model", {LogicalType::VARCHAR}, LogicalType::BOOLEAN, UnloadModel));
 
   const idx_t MAX_FEATURES = 63;
@@ -395,6 +490,7 @@ static void LoadInternal(ExtensionLoader &loader) {
   }
 
   loader.RegisterFunction(ScalarFunction("infera_predict_from_blob", {LogicalType::VARCHAR, LogicalType::BLOB}, LogicalType::LIST(LogicalType::FLOAT), PredictFromBlob));
+  loader.RegisterFunction(ScalarFunction("infera_predict_text", {LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::LIST(LogicalType::FLOAT), PredictText));
   loader.RegisterFunction(ScalarFunction("infera_get_loaded_models", {}, LogicalType::VARCHAR, GetLoadedModels));
   loader.RegisterFunction(ScalarFunction("infera_get_model_info", {LogicalType::VARCHAR}, LogicalType::VARCHAR, GetModelInfo));
   loader.RegisterFunction(ScalarFunction("infera_get_version", {}, LogicalType::VARCHAR, GetVersion));

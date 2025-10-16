@@ -12,6 +12,7 @@ mod error;
 mod ffi_utils;
 mod http;
 mod model;
+mod text;
 
 // Re-export the public FFI utility functions and types
 pub use error::infera_last_error;
@@ -333,6 +334,111 @@ pub unsafe extern "C" fn infera_set_autoload_dir(path: *const c_char) -> *mut c_
     });
     let json_str = serde_json::to_string(&final_json).unwrap_or_default();
     CString::new(json_str).unwrap_or_default().into_raw()
+}
+
+/// Loads an ONNX model configured for text processing.
+///
+/// This function loads an ONNX model and configures it with a tokenizer for text processing.
+/// The model will be set up to handle text inputs by tokenizing them before inference.
+///
+/// # Arguments
+///
+/// * `name` - A pointer to a null-terminated C string representing the unique name for the model.
+/// * `path` - A pointer to a null-terminated C string representing the file path or URL of the model.
+/// * `tokenizer_path` - A pointer to a null-terminated C string representing the path to the tokenizer JSON file.
+/// * `max_length` - The maximum sequence length for tokenization.
+///
+/// # Returns
+///
+/// * `0` on success.
+/// * `-1` on failure. Call `infera_last_error()` to get a descriptive error message.
+///
+/// # Safety
+///
+/// * The `name`, `path`, and `tokenizer_path` pointers must not be null.
+/// * The memory pointed to by these parameters must be valid, null-terminated C strings.
+#[no_mangle]
+pub unsafe extern "C" fn infera_load_text_model(
+    name: *const c_char,
+    path: *const c_char,
+    tokenizer_path: *const c_char,
+    max_length: usize,
+) -> i32 {
+    let result = (|| -> Result<(), error::InferaError> {
+        if name.is_null() || path.is_null() || tokenizer_path.is_null() {
+            return Err(error::InferaError::NullPointer);
+        }
+        let name_str = CStr::from_ptr(name).to_str()?;
+        let path_or_url_str = CStr::from_ptr(path).to_str()?;
+        let tokenizer_path_or_url_str = CStr::from_ptr(tokenizer_path).to_str()?;
+
+        let local_path = if path_or_url_str.starts_with("http") {
+            http::handle_remote_model(path_or_url_str)?
+        } else {
+            path_or_url_str.into()
+        };
+        let local_path_str = local_path.to_str().ok_or(error::InferaError::Utf8Error)?;
+
+        let local_tokenizer_path = if tokenizer_path_or_url_str.starts_with("http") {
+            http::handle_remote_model(tokenizer_path_or_url_str)?
+        } else {
+            tokenizer_path_or_url_str.into()
+        };
+        let local_tokenizer_path_str = local_tokenizer_path.to_str().ok_or(error::InferaError::Utf8Error)?;
+
+        engine::load_text_model_impl(name_str, local_path_str, local_tokenizer_path_str, max_length)
+    })();
+
+    match result {
+        Ok(()) => 0,
+        Err(e) => {
+            error::set_last_error(&e);
+            -1
+        }
+    }
+}
+
+/// Runs text inference on a loaded text model.
+///
+/// This function takes a text input, tokenizes it using the model's configured
+/// tokenizer, and runs inference to generate embeddings or other outputs.
+///
+/// # Arguments
+///
+/// * `model_name` - A pointer to a null-terminated C string for the model's name.
+/// * `text` - A pointer to a null-terminated C string containing the input text.
+///
+/// # Returns
+///
+/// An `InferaInferenceResult` struct containing the output. The caller is responsible
+/// for freeing this result using `infera_free_result`.
+///
+/// # Safety
+///
+/// * `model_name` and `text` must not be null.
+/// * `model_name` and `text` must point to valid, null-terminated C strings.
+#[no_mangle]
+pub unsafe extern "C" fn infera_predict_text(
+    model_name: *const c_char,
+    text: *const c_char,
+) -> InferaInferenceResult {
+    let result = (|| -> Result<InferaInferenceResult, error::InferaError> {
+        if model_name.is_null() || text.is_null() {
+            return Err(error::InferaError::NullPointer);
+        }
+        let name_str = CStr::from_ptr(model_name).to_str()?;
+        let text_str = CStr::from_ptr(text).to_str()?;
+        
+        engine::run_text_inference_impl(name_str, text_str)
+    })();
+
+    match result {
+        Ok(res) => res,
+        Err(e) => {
+            error::set_last_error(&e);
+            InferaInferenceResult::error()
+        }
+    }
 }
 
 #[cfg(test)]

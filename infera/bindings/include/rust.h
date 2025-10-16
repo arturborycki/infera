@@ -39,6 +39,22 @@ extern "C" {
  int32_t infera_load_model(const char *name, const char *path);
 
 /**
+ * Loads a model configured for text processing.
+ *
+ * # Safety
+ * The `name`, `path`, and `tokenizer_path` pointers must be valid, null-terminated C strings.
+ */
+ int32_t infera_load_text_model(const char *name, const char *path, const char *tokenizer_path, uintptr_t max_length);
+
+/**
+ * Loads a model from a file or URL configured for text processing.
+ *
+ * # Safety
+ * The `name`, `path`, and `tokenizer_path` pointers must be valid, null-terminated C strings.
+ */
+ int32_t infera_load_text_model(const char *name, const char *path, const char *tokenizer_path, uintptr_t max_length);
+
+/**
  * Unloads a model.
  *
  * # Safety
@@ -72,6 +88,36 @@ struct InferaInferenceResult infera_predict(const char *model_name,
 struct InferaInferenceResult infera_predict_from_blob(const char *model_name,
                                                       const uint8_t *blob_data,
                                                       uintptr_t blob_len);
+
+/**
+ * Loads an ONNX model configured for text processing.
+ *
+ * # Safety
+ * The `name`, `path`, and `tokenizer_path` pointers must be valid, null-terminated C strings.
+ */
+ int32_t infera_load_text_model(const char *name,
+                                const char *path,
+                                const char *tokenizer_path,
+                                uintptr_t max_length);
+
+/**
+ * Runs text inference on a loaded text model.
+ *
+ * # Safety
+ * The `model_name` and `text` pointers must be valid, null-terminated C strings.
+ */
+struct InferaInferenceResult infera_predict_text(const char *model_name,
+                                                 const char *text);
+
+/**
+ * Runs text inference on a model with the given text input.
+ *
+ * # Safety
+ * The `model_name` and `text` pointers must be valid, null-terminated C strings.
+ */
+
+struct InferaInferenceResult infera_predict_text(const char *model_name,
+                                                 const char *text);
 
 /**
  * Gets information about a loaded model.

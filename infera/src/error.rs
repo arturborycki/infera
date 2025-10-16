@@ -42,6 +42,9 @@ pub enum InferaError {
     /// Error for when a feature is required but not enabled at compile time (e.g., "tract").
     #[error("Feature not enabled: {0}")]
     FeatureNotEnabled(String),
+    /// An error that occurred during text processing (tokenization, encoding, etc.).
+    #[error("Text processing error: {0}")]
+    TextProcessingError(String),
     /// An error that occurred during an HTTP request to fetch a remote model.
     #[error("HTTP request failed: {0}")]
     HttpRequestError(String),

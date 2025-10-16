@@ -4,6 +4,7 @@
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::collections::HashMap;
+use crate::text::TextModelConfig;
 
 #[cfg(feature = "tract")]
 use tract_onnx::prelude::*;
@@ -13,6 +14,15 @@ use tract_onnx::prelude::*;
 #[cfg(feature = "tract")]
 pub(crate) type OnnxModelPlan =
     SimplePlan<TypedFact, Box<dyn TypedOp>, Graph<TypedFact, Box<dyn TypedOp>>>;
+
+/// Enum to define the type of model and its specific configuration
+#[derive(Debug, Clone)]
+pub(crate) enum ModelType {
+    /// Standard numerical model that expects float arrays
+    Numerical,
+    /// Text model that requires tokenization before inference
+    Text(TextModelConfig),
+}
 
 /// Represents a loaded ONNX model, holding its execution plan and metadata.
 #[cfg(feature = "tract")]
@@ -25,6 +35,8 @@ pub(crate) struct OnnxModel {
     pub output_shape: Vec<i64>,
     /// The user-defined name for the model.
     pub name: String,
+    /// The type of model and its configuration
+    pub model_type: ModelType,
 }
 
 /// A placeholder struct for when the "tract" feature is not enabled.
@@ -32,6 +44,8 @@ pub(crate) struct OnnxModel {
 pub(crate) struct OnnxModel {
     /// The user-defined name for the model.
     pub name: String,
+    /// The type of model and its configuration
+    pub model_type: ModelType,
 }
 
 /// A global, thread-safe store for all loaded ONNX models.
