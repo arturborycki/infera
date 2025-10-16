@@ -3,7 +3,8 @@
 
 use crate::error::InferaError;
 use crate::ffi_utils::InferaInferenceResult;
-use crate::model::{OnnxModel, MODELS, ModelType};
+use crate::model::{OnnxModel, MODELS, ModelType, ExecutionEngine};
+use crate::execution_provider::ExecutionProvider;
 use serde_json::json;
 use std::convert::TryInto;
 use std::mem;
@@ -55,7 +56,9 @@ pub(crate) fn load_model_impl(name: &str, path: &str) -> Result<(), InferaError>
         .map(|d| d.to_i64().unwrap_or(-1))
         .collect();
     let onnx_model = OnnxModel {
-        model,
+        engine: ExecutionEngine::Tract(model),
+        execution_provider: ExecutionProvider::CPU,
+        model_path: path.to_string(),
         input_shape,
         output_shape,
         name: name.to_string(),
@@ -132,7 +135,9 @@ pub(crate) fn load_text_model_impl(
     };
     
     let onnx_model = OnnxModel {
-        model,
+        engine: ExecutionEngine::Tract(model),
+        execution_provider: ExecutionProvider::CPU,
+        model_path: path.to_string(),
         input_shape,
         output_shape,
         name: name.to_string(),
@@ -187,8 +192,7 @@ pub(crate) fn run_inference_impl(
     let input_tensor = Tensor::from_shape(&[rows, cols], input_data)
         .map_err(|e| InferaError::OnnxError(e.to_string()))?;
     let outputs = model
-        .model
-        .run(tvec!(input_tensor.into()))
+        .run_inference(vec![input_tensor])
         .map_err(|e| InferaError::OnnxError(e.to_string()))?;
     let output_tensor = outputs
         .into_iter()
@@ -288,8 +292,7 @@ pub(crate) fn run_inference_blob_impl(
     let input_tensor = Tensor::from_shape(&final_shape, &float_vec)
         .map_err(|e| InferaError::OnnxError(e.to_string()))?;
     let outputs = model
-        .model
-        .run(tvec!(input_tensor.into()))
+        .run_inference(vec![input_tensor])
         .map_err(|e| InferaError::OnnxError(e.to_string()))?;
     let output_tensor = outputs
         .into_iter()
@@ -422,8 +425,7 @@ pub(crate) fn run_text_inference_impl(
         .map_err(|e| InferaError::OnnxError(e.to_string()))?;
 
     let outputs = model
-        .model
-        .run(tvec!(input_ids_tensor.into(), attention_mask_tensor.into(), token_type_ids_tensor.into()))
+        .run_inference(vec![input_ids_tensor, attention_mask_tensor, token_type_ids_tensor])
         .map_err(|e| InferaError::OnnxError(e.to_string()))?;
 
     let output_tensor = outputs

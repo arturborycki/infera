@@ -1,6 +1,7 @@
 // src/lib.rs
 // The public C API layer and module declarations.
 
+use crate::error::InferaError;
 use serde_json::json;
 use std::env;
 use std::ffi::{c_char, CStr, CString};
@@ -9,6 +10,7 @@ use std::fs;
 // Declare the internal modules
 mod engine;
 mod error;
+mod execution_provider;
 mod ffi_utils;
 mod http;
 mod model;
@@ -590,6 +592,233 @@ mod tests {
                 .unwrap()
                 .contains("Null pointer passed"));
             infera_free(result_ptr);
+        }
+    }
+}
+
+/// Lists available execution providers on the current system.
+///
+/// Returns a JSON string containing available providers like ["CPU", "CUDA", "CoreML"].
+#[no_mangle]
+pub extern "C" fn infera_get_available_providers() -> *mut c_char {
+    let result = (|| -> Result<*mut c_char, InferaError> {
+        let providers = execution_provider::ExecutionProvider::get_available_providers();
+        let provider_names: Vec<String> = providers.iter().map(|p| p.to_string()).collect();
+        let json_result = json!(provider_names).to_string();
+        Ok(CString::new(json_result)?.into_raw())
+    })();
+    
+    match result {
+        Ok(ptr) => ptr,
+        Err(e) => {
+            error::set_last_error(&e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// Loads an ONNX model with a specific execution provider.
+///
+/// # Arguments
+/// * `name` - The name to assign to the model
+/// * `path` - Path to the ONNX model file  
+/// * `provider` - Execution provider ("CPU", "CUDA", "ROCm", etc.)
+///
+/// # Returns
+/// * 1 on success, 0 on failure
+#[no_mangle]
+pub extern "C" fn infera_load_model_with_provider(
+    name: *const c_char,
+    path: *const c_char,
+    provider: *const c_char,
+) -> i32 {
+    let result = (|| -> Result<(), InferaError> {
+        if name.is_null() || path.is_null() || provider.is_null() {
+            return Err(InferaError::NullPointer);
+        }
+        
+        let name_str = unsafe { CStr::from_ptr(name) }.to_str()?;
+        let path_str = unsafe { CStr::from_ptr(path) }.to_str()?;
+        let provider_str = unsafe { CStr::from_ptr(provider) }.to_str()?;
+        
+        let execution_provider = execution_provider::ExecutionProvider::from_str(provider_str)?;
+        
+        // For now, load with tract (CPU) or fail if GPU requested without onnxruntime
+        match execution_provider {
+            execution_provider::ExecutionProvider::CPU => {
+                engine::load_model_impl(name_str, path_str)?;
+            }
+            _ => {
+                #[cfg(not(feature = "onnxruntime"))]
+                return Err(InferaError::FeatureNotEnabled(
+                    "GPU execution requires 'onnxruntime' feature to be enabled".to_string()
+                ));
+                
+                #[cfg(feature = "onnxruntime")]
+                return Err(InferaError::FeatureNotEnabled(
+                    "GPU model loading not yet implemented".to_string()
+                ));
+            }
+        }
+        Ok(())
+    })();
+    
+    match result {
+        Ok(()) => 1,
+        Err(e) => {
+            error::set_last_error(&e);
+            0
+        }
+    }
+}
+
+/// Loads a text model with a specific execution provider.
+///
+/// # Arguments
+/// * `name` - The name to assign to the model
+/// * `model_path` - Path to the ONNX model file
+/// * `tokenizer_path` - Path to the tokenizer JSON file  
+/// * `max_length` - Maximum sequence length for tokenization
+/// * `provider` - Execution provider ("CPU", "CUDA", "ROCm", etc.)
+///
+/// # Returns
+/// * 1 on success, 0 on failure
+#[no_mangle]
+pub extern "C" fn infera_load_text_model_with_provider(
+    name: *const c_char,
+    model_path: *const c_char,
+    tokenizer_path: *const c_char,
+    max_length: usize,
+    provider: *const c_char,
+) -> i32 {
+    let result = (|| -> Result<(), InferaError> {
+        if name.is_null() || model_path.is_null() || tokenizer_path.is_null() || provider.is_null() {
+            return Err(InferaError::NullPointer);
+        }
+        
+        let name_str = unsafe { CStr::from_ptr(name) }.to_str()?;
+        let model_path_str = unsafe { CStr::from_ptr(model_path) }.to_str()?;
+        let tokenizer_path_str = unsafe { CStr::from_ptr(tokenizer_path) }.to_str()?;
+        let provider_str = unsafe { CStr::from_ptr(provider) }.to_str()?;
+        
+        let execution_provider = execution_provider::ExecutionProvider::from_str(provider_str)?;
+        
+        // Handle remote URLs by downloading first
+        let local_model_path = if model_path_str.starts_with("http://") || model_path_str.starts_with("https://") {
+            http::handle_remote_model(model_path_str)?.to_string_lossy().to_string()
+        } else {
+            model_path_str.to_string()
+        };
+        
+        let local_tokenizer_path = if tokenizer_path_str.starts_with("http://") || tokenizer_path_str.starts_with("https://") {
+            http::handle_remote_model(tokenizer_path_str)?.to_string_lossy().to_string()
+        } else {
+            tokenizer_path_str.to_string()
+        };
+        
+        // For now, load with tract (CPU) or fail if GPU requested without onnxruntime
+        match execution_provider {
+            execution_provider::ExecutionProvider::CPU => {
+                engine::load_text_model_impl(name_str, &local_model_path, &local_tokenizer_path, max_length)?;
+            }
+            _ => {
+                #[cfg(not(feature = "onnxruntime"))]
+                return Err(InferaError::FeatureNotEnabled(
+                    "GPU execution requires 'onnxruntime' feature to be enabled".to_string()
+                ));
+                
+                #[cfg(feature = "onnxruntime")]
+                return Err(InferaError::FeatureNotEnabled(
+                    "GPU text model loading not yet implemented".to_string()
+                ));
+            }
+        }
+        Ok(())
+    })();
+    
+    match result {
+        Ok(()) => 1,
+        Err(e) => {
+            error::set_last_error(&e);
+            0
+        }
+    }
+}
+
+/// Switches the execution provider for a loaded model.
+///
+/// # Arguments
+/// * `name` - The name of the loaded model
+/// * `provider` - New execution provider ("CPU", "CUDA", "ROCm", etc.)
+///
+/// # Returns
+/// * 1 on success, 0 on failure
+#[no_mangle]
+pub extern "C" fn infera_set_execution_provider(
+    name: *const c_char,
+    provider: *const c_char,
+) -> i32 {
+    let result = (|| -> Result<(), InferaError> {
+        if name.is_null() || provider.is_null() {
+            return Err(InferaError::NullPointer);
+        }
+        
+        let name_str = unsafe { CStr::from_ptr(name) }.to_str()?;
+        let provider_str = unsafe { CStr::from_ptr(provider) }.to_str()?;
+        
+        let execution_provider = execution_provider::ExecutionProvider::from_str(provider_str)?;
+        
+        let mut models = model::MODELS.write();
+        let model = models.get_mut(name_str)
+            .ok_or_else(|| InferaError::ModelNotFound(name_str.to_string()))?;
+            
+        model.switch_provider(execution_provider)?;
+        Ok(())
+    })();
+    
+    match result {
+        Ok(()) => 1,
+        Err(e) => {
+            error::set_last_error(&e);
+            0
+        }
+    }
+}
+
+/// Gets the current execution provider for a loaded model.
+///
+/// # Arguments
+/// * `name` - The name of the loaded model
+///
+/// # Returns
+/// * JSON string with provider info, or null on failure
+#[no_mangle]
+pub extern "C" fn infera_get_execution_provider(name: *const c_char) -> *mut c_char {
+    let result = (|| -> Result<*mut c_char, InferaError> {
+        if name.is_null() {
+            return Err(InferaError::NullPointer);
+        }
+        
+        let name_str = unsafe { CStr::from_ptr(name) }.to_str()?;
+        
+        let models = model::MODELS.read();
+        let model = models.get(name_str)
+            .ok_or_else(|| InferaError::ModelNotFound(name_str.to_string()))?;
+            
+        let result = json!({
+            "name": name_str,
+            "execution_provider": model.execution_provider.to_string(),
+            "available": model.execution_provider.is_available()
+        }).to_string();
+        
+        Ok(CString::new(result)?.into_raw())
+    })();
+    
+    match result {
+        Ok(ptr) => ptr,
+        Err(e) => {
+            error::set_last_error(&e);
+            std::ptr::null_mut()
         }
     }
 }

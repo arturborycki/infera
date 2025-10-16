@@ -465,6 +465,168 @@ static void PredictText(DataChunk &args, ExpressionState &state, Vector &result)
 }
 
 /**
+ * @brief Implements the `infera_get_available_providers()` SQL function.
+ *
+ * Returns a JSON array of available execution providers on the current system.
+ */
+static void GetAvailableProviders(DataChunk &args, ExpressionState &state, Vector &result) {
+  if (args.ColumnCount() != 0) {
+    throw InvalidInputException("infera_get_available_providers() expects no arguments");
+  }
+  if (args.size() == 0) { return; }
+
+  char *providers_json = infera::infera_get_available_providers();
+  if (!providers_json) {
+    throw InvalidInputException("Failed to get available providers: " + GetInferaError());
+  }
+
+  std::string result_str(providers_json);
+  infera::infera_free(providers_json);
+
+  for (idx_t i = 0; i < args.size(); i++) {
+    result.SetValue(i, Value(result_str));
+  }
+  result.Verify(args.size());
+}
+
+/**
+ * @brief Implements the `infera_load_model_gpu(name, path, provider)` SQL function.
+ *
+ * Loads an ONNX model with a specific execution provider.
+ */
+static void LoadModelGpu(DataChunk &args, ExpressionState &state, Vector &result) {
+  if (args.ColumnCount() != 3) {
+    throw InvalidInputException("infera_load_model_gpu(name, path, provider) expects exactly 3 arguments");
+  }
+  if (args.size() == 0) { return; }
+
+  auto &name_vec = args.data[0];
+  auto &path_vec = args.data[1];
+  auto &provider_vec = args.data[2];
+
+  for (idx_t i = 0; i < args.size(); i++) {
+    std::string name_str = name_vec.GetValue(i).ToString();
+    std::string path_str = path_vec.GetValue(i).ToString();
+    std::string provider_str = provider_vec.GetValue(i).ToString();
+
+    int success = infera::infera_load_model_with_provider(
+      name_str.c_str(), 
+      path_str.c_str(), 
+      provider_str.c_str()
+    );
+
+    if (success != 1) {
+      throw InvalidInputException("Failed to load model '" + name_str + "' with provider '" + provider_str + "': " + GetInferaError());
+    }
+
+    result.SetValue(i, Value::BOOLEAN(true));
+  }
+  result.Verify(args.size());
+}
+
+/**
+ * @brief Implements the `infera_load_text_model_gpu(name, model_path, tokenizer_path, max_length, provider)` SQL function.
+ *
+ * Loads a text model with a specific execution provider.
+ */
+static void LoadTextModelGpu(DataChunk &args, ExpressionState &state, Vector &result) {
+  if (args.ColumnCount() != 5) {
+    throw InvalidInputException("infera_load_text_model_gpu(name, model_path, tokenizer_path, max_length, provider) expects exactly 5 arguments");
+  }
+  if (args.size() == 0) { return; }
+
+  auto &name_vec = args.data[0];
+  auto &model_path_vec = args.data[1];
+  auto &tokenizer_path_vec = args.data[2];
+  auto &max_length_vec = args.data[3];
+  auto &provider_vec = args.data[4];
+
+  for (idx_t i = 0; i < args.size(); i++) {
+    std::string name_str = name_vec.GetValue(i).ToString();
+    std::string model_path_str = model_path_vec.GetValue(i).ToString();
+    std::string tokenizer_path_str = tokenizer_path_vec.GetValue(i).ToString();
+    int64_t max_length = max_length_vec.GetValue(i).GetValue<int64_t>();
+    std::string provider_str = provider_vec.GetValue(i).ToString();
+
+    int success = infera::infera_load_text_model_with_provider(
+      name_str.c_str(), 
+      model_path_str.c_str(), 
+      tokenizer_path_str.c_str(),
+      static_cast<size_t>(max_length),
+      provider_str.c_str()
+    );
+
+    if (success != 1) {
+      throw InvalidInputException("Failed to load text model '" + name_str + "' with provider '" + provider_str + "': " + GetInferaError());
+    }
+
+    result.SetValue(i, Value::BOOLEAN(true));
+  }
+  result.Verify(args.size());
+}
+
+/**
+ * @brief Implements the `infera_set_execution_provider(name, provider)` SQL function.
+ *
+ * Switches the execution provider for a loaded model.
+ */
+static void SetExecutionProvider(DataChunk &args, ExpressionState &state, Vector &result) {
+  if (args.ColumnCount() != 2) {
+    throw InvalidInputException("infera_set_execution_provider(name, provider) expects exactly 2 arguments");
+  }
+  if (args.size() == 0) { return; }
+
+  auto &name_vec = args.data[0];
+  auto &provider_vec = args.data[1];
+
+  for (idx_t i = 0; i < args.size(); i++) {
+    std::string name_str = name_vec.GetValue(i).ToString();
+    std::string provider_str = provider_vec.GetValue(i).ToString();
+
+    int success = infera::infera_set_execution_provider(
+      name_str.c_str(), 
+      provider_str.c_str()
+    );
+
+    if (success != 1) {
+      throw InvalidInputException("Failed to set execution provider for model '" + name_str + "': " + GetInferaError());
+    }
+
+    result.SetValue(i, Value::BOOLEAN(true));
+  }
+  result.Verify(args.size());
+}
+
+/**
+ * @brief Implements the `infera_get_execution_provider(name)` SQL function.
+ *
+ * Gets the current execution provider for a loaded model.
+ */
+static void GetExecutionProvider(DataChunk &args, ExpressionState &state, Vector &result) {
+  if (args.ColumnCount() != 1) {
+    throw InvalidInputException("infera_get_execution_provider(name) expects exactly 1 argument");
+  }
+  if (args.size() == 0) { return; }
+
+  auto &name_vec = args.data[0];
+
+  for (idx_t i = 0; i < args.size(); i++) {
+    std::string name_str = name_vec.GetValue(i).ToString();
+
+    char *provider_info = infera::infera_get_execution_provider(name_str.c_str());
+    if (!provider_info) {
+      throw InvalidInputException("Failed to get execution provider for model '" + name_str + "': " + GetInferaError());
+    }
+
+    std::string result_str(provider_info);
+    infera::infera_free(provider_info);
+
+    result.SetValue(i, Value(result_str));
+  }
+  result.Verify(args.size());
+}
+
+/**
  * @brief Registers all the Infera functions with DuckDB.
  *
  * This internal helper function is called by the extension loading mechanism to
@@ -495,6 +657,13 @@ static void LoadInternal(ExtensionLoader &loader) {
   loader.RegisterFunction(ScalarFunction("infera_get_model_info", {LogicalType::VARCHAR}, LogicalType::VARCHAR, GetModelInfo));
   loader.RegisterFunction(ScalarFunction("infera_get_version", {}, LogicalType::VARCHAR, GetVersion));
   loader.RegisterFunction(ScalarFunction("infera_set_autoload_dir", {LogicalType::VARCHAR}, LogicalType::VARCHAR, SetAutoloadDir));
+  
+  // GPU/execution provider functions
+  loader.RegisterFunction(ScalarFunction("infera_get_available_providers", {}, LogicalType::VARCHAR, GetAvailableProviders));
+  loader.RegisterFunction(ScalarFunction("infera_load_model_gpu", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::BOOLEAN, LoadModelGpu));
+  loader.RegisterFunction(ScalarFunction("infera_load_text_model_gpu", {LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::VARCHAR, LogicalType::BIGINT, LogicalType::VARCHAR}, LogicalType::BOOLEAN, LoadTextModelGpu));
+  loader.RegisterFunction(ScalarFunction("infera_set_execution_provider", {LogicalType::VARCHAR, LogicalType::VARCHAR}, LogicalType::BOOLEAN, SetExecutionProvider));
+  loader.RegisterFunction(ScalarFunction("infera_get_execution_provider", {LogicalType::VARCHAR}, LogicalType::VARCHAR, GetExecutionProvider));
 }
 
 void InferaExtension::Load(ExtensionLoader &loader) { LoadInternal(loader); }

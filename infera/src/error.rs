@@ -63,11 +63,29 @@ pub enum InferaError {
         /// The actual number of elements found in the blob.
         actual: usize,
     },
+    /// Error for when an invalid execution provider is specified.
+    #[error("Invalid execution provider: {0}. Valid providers are: CPU, CUDA, ROCm, DirectML, CoreML")]
+    InvalidExecutionProvider(String),
+    /// Error for when a requested execution provider is not available on the current system.
+    #[error("Execution provider {0} is not available on this system")]
+    ExecutionProviderNotAvailable(String),
+    /// Error that occurred during ONNX Runtime operations.
+    #[error("ONNX Runtime error: {0}")]
+    OnnxRuntimeError(String),
+    /// Error for when GPU memory allocation fails.
+    #[error("GPU memory allocation failed: {0}")]
+    GpuMemoryError(String),
 }
 
 impl From<StdUtf8Error> for InferaError {
     fn from(_: StdUtf8Error) -> Self {
         InferaError::Utf8Error
+    }
+}
+
+impl From<std::ffi::NulError> for InferaError {
+    fn from(_: std::ffi::NulError) -> Self {
+        InferaError::Utf8Error  // We can reuse this for string conversion errors
     }
 }
 
